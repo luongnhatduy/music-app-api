@@ -6,9 +6,12 @@ var bodyParser = require("body-parser");
 const app = express();
 const port = 4000;
 const listSong = require("./models/listSong");
+const account = require("./models/account");
+const favoriteSong = require("./models/favoriteSong");
 const listSongCrawl = require("./models/listSongCrawl");
-
+const category = require("./models/category");
 const listBanner = require("./models/listBanner");
+const comment = require("./models/comment");
 
 const passport = require("passport");
 const FacebookStrategy = require("passport-facebook").Strategy;
@@ -36,8 +39,8 @@ passport.deserializeUser(function (user, done) {
 passport.use(
   new FacebookStrategy(
     {
-      clientID: "713896392819190",
-      clientSecret: "4725e0e5a332a54ad1f4f9268a5dcc08",
+      clientID: "313855513316412",
+      clientSecret: "2ad7bfe836adb55454be095f2d846155",
       callbackURL: "/auth/facebook/callback",
       profileFields: [
         "id",
@@ -78,7 +81,7 @@ app.get(
   passport.authenticate("facebook", { failureRedirect: "/" }),
   // Redirect user back to the mobile app using Linking with a custom protocol OAuthLogin
   (req, res) => {
-    console.log("req___________",req.user)
+    console.log("req___________", req.user);
     // res.redirect("OAuthLogin://login?user=" + JSON.stringify(req.user));
     res.redirect(`?userId=${11111}`);
   }
@@ -101,26 +104,32 @@ app.get("/all_banner", async (req, res) => {
 });
 
 app.get(
-  "/list_top",
+  "/list_top/:accountId/:categoryId",
   async (req, res) => {
-    let rest = await listSong.find();
-    // rest.sort(function(a, b) {
-    //   return a.count_view - b.count_view;
-    // });
-    res.json(rest.slice(0, 20));
+    const rest = await listSong.find({ categoryId: req.params.categoryId });
+    const data = await Promise.all(
+      rest.slice(0, 20).map(async (item) => {
+        const song = await favoriteSong.findOne({
+          accountId: req.params.accountId,
+          songId: item._id,
+        });
+        if (song) {
+          return { item, statusLike: true };
+        } else {
+          return { item, statusLike: false };
+        }
+      })
+    );
+    res.json(data);
   },
   []
 );
 
-app.get("/list_favorite", async (req, res) => {
-  let rest = await listSong.find();
-  const listFavorite = [];
-  rest.forEach((item) => {
-    if (item.status == true) {
-      listFavorite.push(item);
-    }
+app.get("/list_favorite/:accountId", async (req, res) => {
+  let rest = await favoriteSong.find({
+    accountId: req.params.accountId,
   });
-  res.json(listFavorite);
+  res.json(rest);
 });
 
 app.post("/add_song", function (req, res) {
@@ -134,6 +143,32 @@ app.post("/add_banner", function (req, res) {
   listBanner.insertMany(req.body).then(function (respon) {
     res.send(respon);
   });
+});
+
+app.post("/category", function (req, res) {
+  category.insertMany(req.body).then(function (respon) {
+    res.send(respon);
+  });
+});
+
+app.get("/fetchCategory", async (req, res) => {
+  const rest = await category.find();
+  res.send(rest);
+});
+
+app.post("/login", async (req, res) => {
+  try {
+    const user = await account.findOne({ facebookId: req.body.facebookId });
+    if (user) {
+      res.json(user);
+    } else {
+      account.insertMany(req.body).then(function (respon) {
+        res.send(respon[0]);
+      });
+    }
+  } catch (error) {
+    res.send(error);
+  }
 });
 
 function xoa_dau(str) {
@@ -174,6 +209,8 @@ app.post(
       let countKeyWord = 0;
       nameSongArray.forEach((i) => {
         if (
+          item.name_song &&
+          item.name_singer &&
           (xoa_dau(item.name_song).indexOf(i) !== -1 ||
             xoa_dau(item.name_singer).indexOf(i) !== -1) &&
           i !== ""
@@ -199,22 +236,70 @@ app.post(
 app.post(
   "/likeSong",
   async (req, res) => {
-    let item = await listSong.findOne({ _id: req.body._id });
-    listSong
-      .findByIdAndUpdate(
-        { _id: req.body._id },
-        { $set: { status: item.status ? !item.status : true } }
-      )
-      .then(async function () {
-        // let rest = await listSong.find();
-        // res.json(rest);
-      })
-      .catch(function (err) {
-        res.send(err);
+    try {
+      const song = await favoriteSong.findOne({
+        accountId: req.body.accountId,
+        songId: req.body.songId,
       });
+      if (song) {
+        console.log("delete", song);
+        favoriteSong
+          .deleteOne({
+            accountId: req.body.accountId,
+            songId: req.body.songId,
+          })
+          .then(function (respon) {
+            res.send({ ...song, ...{ status: "delete" } });
+          });
+      } else {
+        console.log("create", song);
+
+        favoriteSong.insertMany(req.body).then(function (respon) {
+          console.log(respon, "respon");
+          res.send({ ...respon[0], ...{ status: "create" } });
+        });
+      }
+    } catch (error) {
+      res.send(error);
+    }
   },
   []
 );
+
+app.post("/sendComment", function (req, res) {
+  comment.insertMany(req.body).then(function (respon) {
+    console.log(respon);
+    res.send(respon);
+  });
+});
+
+app.post("/deleteComment", function (req, res) {
+  comment
+    .deleteOne({
+      _id: req.body.id,
+    })
+    .then(function (respon) {
+      console.log(respon);
+      res.send(respon);
+    });
+});
+
+app.get("/fetchComment/:songId", function (req, res) {
+  comment
+    .find({
+      songId: req.params.songId,
+    })
+    .then(async (respon) => {
+      const result = await Promise.all(
+        respon.map(async (item) => {
+          const user = await account.findOne({ facebookId: item.accountId });
+          return { item, user: user };
+        })
+      );
+      console.log(result, "result");
+      res.send(result);
+    });
+});
 
 app.listen(port, () => console.log(`Example app listening on port ${port}!`));
 

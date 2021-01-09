@@ -7,6 +7,7 @@ var listSong = new Schema({
   link: String,
   count_view: Number,
   img: String,
+  categoryId: String,
   type : String,
   status : Boolean
 });
